@@ -198,10 +198,12 @@ export default function GameMap() {
                 if (bounds) {
                     fetchLands(bounds, currentZoom);
                 }
-                // Notify TopBar of state change
-                window.dispatchEvent(new CustomEvent('map_state_changed', {
-                    detail: { discoveryMode: newMode }
-                }));
+                // Notify TopBar of state change ASYNCHRONOUSLY to avoid render cycle conflicts
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('map_state_changed', {
+                        detail: { discoveryMode: newMode }
+                    }));
+                }, 0);
                 return newMode;
             });
         };
@@ -209,10 +211,12 @@ export default function GameMap() {
         const handleAutoSearchToggle = () => {
             setAutoSearchActive(prev => {
                 const newState = !prev;
-                // Notify TopBar of state change
-                window.dispatchEvent(new CustomEvent('map_state_changed', {
-                    detail: { autoSearchActive: newState }
-                }));
+                // Notify TopBar of state change ASYNCHRONOUSLY
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('map_state_changed', {
+                        detail: { autoSearchActive: newState }
+                    }));
+                }, 0);
                 return newState;
             });
         };

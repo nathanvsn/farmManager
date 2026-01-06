@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash VARCHAR(255) NOT NULL,
     money NUMERIC(15, 2) DEFAULT 200000,
     diamonds INTEGER DEFAULT 200,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    silo_inventory JSONB DEFAULT '{"seeds": {}, "produce": {}}'::jsonb
 );
 
 -- Index for faster lookups

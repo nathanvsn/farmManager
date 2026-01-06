@@ -1,5 +1,6 @@
 
 import { useEffect, useState } from 'react';
+import SowPlanningModal from './SowPlanningModal';
 
 type LandActionSidebarProps = {
     land: any;
@@ -12,6 +13,7 @@ export default function LandSidebar({ land, onClose, onUpdate }: LandActionSideb
     const [loading, setLoading] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
     const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+    const [showSowModal, setShowSowModal] = useState(false);
 
     useEffect(() => {
         if (land) {
@@ -26,19 +28,25 @@ export default function LandSidebar({ land, onClose, onUpdate }: LandActionSideb
         }
     }, [land]);
 
-    // Real-time countdown
+    // Timer countdown
     useEffect(() => {
-        if (timeRemaining !== null && timeRemaining > 0) {
-            const interval = setInterval(() => {
-                setTimeRemaining(prev => {
-                    if (prev === null || prev <= 1) {
-                        clearInterval(interval);
-                        return 0;
-                    }
-                    return prev - 1;
-                });
-            }, 1000);
-            return () => clearInterval(interval);
+        if (timeRemaining === null || timeRemaining <= 0) return;
+
+        const interval = setInterval(() => {
+            setTimeRemaining(prev => {
+                if (prev === null || prev <= 0) return 0;
+                return prev - 1;
+            });
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [timeRemaining]);
+
+    // Auto-finish when timer reaches 0
+    useEffect(() => {
+        if (timeRemaining === 0 && land.operation_end) {
+            // Auto-finish operation
+            handleFinish();
         }
     }, [timeRemaining]);
 
@@ -52,7 +60,7 @@ export default function LandSidebar({ land, onClose, onUpdate }: LandActionSideb
         }
     };
 
-    const handleAction = async (action: string, toolInvId?: number) => {
+    const handleAction = async (action: string, machineId: number, seedId?: number) => {
         setActionLoading(true);
         try {
             const res = await fetch('/api/game/farm', {
@@ -60,9 +68,10 @@ export default function LandSidebar({ land, onClose, onUpdate }: LandActionSideb
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     type: 'start',
-                    action,
+                    action: action,
                     landId: land.id,
-                    toolInvId
+                    toolInvId: machineId,
+                    seedId: seedId // Pass seedId for sow action
                 })
             });
             const data = await res.json();
@@ -251,7 +260,16 @@ export default function LandSidebar({ land, onClose, onUpdate }: LandActionSideb
                             Ação Disponível: <span className="text-emerald-400 capitalize">{possibleAction === 'clean' ? 'Limpeza' : possibleAction === 'plow' ? 'Arar' : 'Semear'}</span>
                         </h3>
 
-                        {machines.length > 0 ? (
+                        {possibleAction === 'sow' ? (
+                            // Sow action uses modal
+                            <button
+                                onClick={() => setShowSowModal(true)}
+                                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded shadow transition-colors flex items-center justify-center gap-2"
+                            >
+                                <span>🌱</span>
+                                <span>Planejar Plantio</span>
+                            </button>
+                        ) : machines.length > 0 ? (
                             <div className="space-y-2">
                                 <p className="text-sm text-slate-400 mb-2">Selecione o maquinário:</p>
                                 {machines.map(machine => (
@@ -295,7 +313,113 @@ export default function LandSidebar({ land, onClose, onUpdate }: LandActionSideb
                         <p className="text-sm text-slate-400">Aguarde o tempo de maturação.</p>
                     </div>
                 )}
+
+                {/* Harvest Option for Mature Lands */}
+                {land.condition === 'mature' && (
+                    <div className="space-y-4">
+                        <div className="bg-green-900/40 border border-green-500/50 rounded-lg p-4">
+                            <h3 className="text-green-300 font-bold mb-2 flex items-center gap-2">
+                                🌾 Colheita Pronta!
+                            </h3>
+                            <p className="text-sm text-green-200 mb-3">
+                                A plantação está madura e pronta para ser colhida.
+                            </p>
+                            {land.current_crop_id && (
+                                <p className="text-xs text-green-300 mb-2">
+                                    Rendimento esperado: ~{Math.floor((land.area_sqm / 10000) * 3000)} - {Math.floor((land.area_sqm / 10000) * 4000)} kg
+                                </p>
+                            )}
+                        </div>
+
+                        <h3 className="text-lg font-bold text-white border-b border-slate-700 pb-2">
+                            Selecione a Colheitadeira:
+                        </h3>
+
+                        {(() => {
+                            const harvesters = inventory.filter(item =>
+                                item.type === 'heavy' && item.stats.operation === 'harvesting'
+                            );
+
+                            if (harvesters.length === 0) {
+                                return (
+                                    <div className="bg-red-900/20 border border-red-900 p-3 rounded">
+                                        <p className="text-red-400 text-sm font-bold">❌ Sem colheitadeira!</p>
+                                        <p className="text-xs text-red-300 mt-1">
+                                            Precisa de uma colheitadeira para colher.
+                                        </p>
+                                        <button className="text-xs text-emerald-400 underline mt-2" onClick={onClose}>
+                                            Ir à Loja
+                                        </button>
+                                    </div>
+                                );
+                            }
+
+                            return (
+                                <div className="space-y-2">
+                                    {harvesters.map(harvester => (
+                                        <button
+                                            key={harvester.id}
+                                            onClick={async () => {
+                                                setActionLoading(true);
+                                                try {
+                                                    const res = await fetch('/api/game/farm', {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({
+                                                            type: 'harvest',
+                                                            landId: land.id,
+                                                            toolInvId: harvester.id
+                                                        })
+                                                    });
+                                                    const data = await res.json();
+
+                                                    if (data.success) {
+                                                        alert(
+                                                            `Colheita realizada com sucesso!\n\n` +
+                                                            `Produto: ${data.cropName}\n` +
+                                                            `Quantidade colhida: ${data.yield}kg\n` +
+                                                            `Adicionado ao silo!`
+                                                        );
+                                                        onUpdate();
+                                                    } else {
+                                                        alert('Erro: ' + data.error);
+                                                    }
+                                                } catch (e) {
+                                                    alert('Erro de conexão');
+                                                } finally {
+                                                    setActionLoading(false);
+                                                }
+                                            }}
+                                            disabled={actionLoading}
+                                            className="w-full bg-green-800 hover:bg-green-700 border border-green-600 hover:border-green-500 rounded p-3 flex items-center gap-3 transition-all disabled:opacity-50 disabled:cursor-not-allowed group text-left"
+                                        >
+                                            <div className="w-10 h-10 rounded bg-slate-900 overflow-hidden flex-shrink-0">
+                                                <img src={harvester.image_url} className="w-full h-full object-cover" />
+                                            </div>
+                                            <div>
+                                                <p className="font-bold text-white text-sm">{harvester.name}</p>
+                                                <p className="text-xs text-green-200">Colheitadeira</p>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            );
+                        })()}
+                    </div>
+                )}
             </div>
+
+            {/* Sow Planning Modal */}
+            <SowPlanningModal
+                isOpen={showSowModal}
+                onClose={() => setShowSowModal(false)}
+                land={land}
+                machinery={getCompatibleTools('sow')}
+                onConfirm={(machineId, seedId) => {
+                    handleAction('sow', machineId, seedId);
+                    setShowSowModal(false);
+                }}
+            />
         </div>
     );
 }

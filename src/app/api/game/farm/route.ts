@@ -1,7 +1,7 @@
 
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { startAction, finishOperation } from '@/lib/farmingService';
+import { startAction, finishOperation, harvest } from '@/lib/farmingService';
 
 export async function POST(request: Request) {
     const session = await getSession();
@@ -9,21 +9,26 @@ export async function POST(request: Request) {
 
     try {
         const body = await request.json();
-        const { action, landId, toolInvId, type } = body;
+        const { action, landId, toolInvId, type, seedId } = body;
 
         const userId = session.id as number;
         if (typeof userId !== 'number') {
             return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
         }
 
-        // action: 'start' | 'finish'
-
+        // Handle different action types
         if (type === 'finish') {
             const result = await finishOperation(userId, landId);
             return NextResponse.json(result);
+        } else if (type === 'harvest') {
+            if (!toolInvId) return NextResponse.json({ error: 'Tool required' }, { status: 400 });
+            const result = await harvest(userId, landId, toolInvId);
+            return NextResponse.json(result);
         } else if (type === 'start') {
             if (!toolInvId) return NextResponse.json({ error: 'Tool required' }, { status: 400 });
-            const result = await startAction(userId, landId, action, toolInvId);
+
+            // Pass seedId if action is 'sow'
+            const result = await startAction(userId, landId, action, toolInvId, seedId);
             return NextResponse.json(result);
         }
 

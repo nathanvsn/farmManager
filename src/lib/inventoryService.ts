@@ -44,7 +44,7 @@ export async function buyItem(userId: number, itemId: number, quantity: number =
         // 3. Deduct Money
         await client.query('UPDATE users SET money = money - $1 WHERE id = $2', [totalCost, userId]);
 
-        // 4. Add to Inventory
+        // 4. Add to Inventory (for backward compatibility)
         if (['tractor', 'implement', 'heavy'].includes(item.type)) {
             // Machines are unique instances
             for (let i = 0; i < quantity; i++) {
@@ -54,7 +54,7 @@ export async function buyItem(userId: number, itemId: number, quantity: number =
                 `, [userId, itemId]);
             }
         } else {
-            // Seeds/Consumer goods stack
+            // Seeds/Consumer goods stack in inventory
             const existingRes = await client.query(`
                 SELECT id FROM inventory 
                 WHERE user_id = $1 AND item_id = $2
@@ -70,6 +70,28 @@ export async function buyItem(userId: number, itemId: number, quantity: number =
                     INSERT INTO inventory (user_id, item_id, quantity)
                     VALUES ($1, $2, $3)
                 `, [userId, itemId, quantity]);
+            }
+
+            // 5. NEW: Also add seeds to silo_inventory (inline to avoid nested transactions)
+            if (item.type === 'seed') {
+                const siloRes = await client.query(
+                    'SELECT silo_inventory FROM users WHERE id = $1',
+                    [userId]
+                );
+
+                const silo = siloRes.rows[0]?.silo_inventory || { seeds: {}, produce: {} };
+
+                if (!silo.seeds) {
+                    silo.seeds = {};
+                }
+
+                const currentQty = silo.seeds[itemId] || 0;
+                silo.seeds[itemId] = currentQty + quantity;
+
+                await client.query(
+                    'UPDATE users SET silo_inventory = $1 WHERE id = $2',
+                    [JSON.stringify(silo), userId]
+                );
             }
         }
 

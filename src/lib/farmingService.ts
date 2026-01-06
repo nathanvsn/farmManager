@@ -1,5 +1,6 @@
 
 import { query, transaction } from '@/lib/db';
+import { removeFromSilo, addToSilo } from '@/lib/siloService';
 
 // Helper to calculate duration in seconds
 function calculateDuration(areaSqm: number, efficiencyHaH: number, speedMultiplier: number) {
@@ -21,7 +22,7 @@ function getGameDuration(areaSqm: number, efficiency: number) {
     return Math.floor((areaHa * baseSecondsPerHa) / (efficiency || 1));
 }
 
-export async function startAction(userId: number, landId: string | number, action: 'clean' | 'plow' | 'sow' | 'harvest', toolInvId: number) {
+export async function startAction(userId: number, landId: string | number, action: 'clean' | 'plow' | 'sow' | 'harvest', toolInvId: number, seedId?: number) {
     return await transaction(async (client) => {
         // 1. Get Land
         const landRes = await client.query('SELECT * FROM lands WHERE id = $1 FOR UPDATE', [landId]);
@@ -96,18 +97,52 @@ export async function startAction(userId: number, landId: string | number, actio
             } else {
                 throw new Error('Precisa de uma semeadeira acoplada');
             }
+
+            // Seed deduction logic
+            if (!seedId) {
+                throw new Error('Selecione uma semente para plantar');
+            }
+
+            // Get seed info
+            const seedRes = await client.query(
+                'SELECT * FROM game_items WHERE id = $1 AND type = $2',
+                [seedId, 'seed']
+            );
+
+            if (seedRes.rows.length === 0) {
+                throw new Error('Semente não encontrada');
+            }
+
+            const seed = seedRes.rows[0];
+            const areaHa = land.area_sqm / 10000;
+            const requiredSeeds = Math.ceil(areaHa * (seed.stats.seed_usage_kg_ha || 60));
+
+            // Check and deduct seeds from silo using siloService
+            try {
+                await removeFromSilo(userId, 'seeds', seedId, requiredSeeds);
+            } catch (error: any) {
+                throw new Error(`Sementes insuficientes. ${error.message}`);
+            }
         }
 
         const durationSeconds = getGameDuration(land.area_sqm, efficiency);
         const startTime = new Date();
         const endTime = new Date(startTime.getTime() + durationSeconds * 1000);
 
-        // Update Land
-        await client.query(`
-            UPDATE lands 
-            SET operation_start = $1, operation_end = $2, operation_type = $3
-            WHERE id = $4
-        `, [startTime, endTime, action, landId]);
+        // Update Land (add current_crop_id for sow)
+        if (action === 'sow' && seedId) {
+            await client.query(`
+                UPDATE lands 
+                SET operation_start = $1, operation_end = $2, operation_type = $3, current_crop_id = $4
+                WHERE id = $5
+            `, [startTime, endTime, action, seedId, landId]);
+        } else {
+            await client.query(`
+                UPDATE lands 
+                SET operation_start = $1, operation_end = $2, operation_type = $3
+                WHERE id = $4
+            `, [startTime, endTime, action, landId]);
+        }
 
         return { success: true, duration: durationSeconds, endTime };
     });
@@ -133,10 +168,28 @@ export async function finishOperation(userId: number, landId: string | number) {
         if (action === 'plow') newCondition = 'arado';
         if (action === 'sow') {
             newCondition = 'growing';
-            // Logic to set crop would be passed in startAction, fixed later
+            // Get seed growth time and set new operation_end for maturation
+            const seedRes = await client.query(
+                'SELECT stats FROM game_items WHERE id = $1',
+                [cropId]
+            );
+
+            if (seedRes.rows.length > 0) {
+                const seed = seedRes.rows[0];
+                const growthTime = seed.stats.growth_time || 120; // seconds
+                const maturationTime = new Date(Date.now() + growthTime * 1000);
+
+                await client.query(`
+                    UPDATE lands 
+                    SET condition = $1, operation_start = NOW(), operation_end = $2, operation_type = 'growing'
+                    WHERE id = $3
+                `, [newCondition, maturationTime, landId]);
+
+                return { completed: true, newCondition, maturationTime };
+            }
         }
 
-        // Clear operation
+        // Clear operation for other actions
         await client.query(`
             UPDATE lands 
             SET condition = $1, operation_start = NULL, operation_end = NULL, operation_type = NULL 
@@ -145,4 +198,95 @@ export async function finishOperation(userId: number, landId: string | number) {
 
         return { completed: true, newCondition };
     });
+}
+
+// Harvest function
+export async function harvest(userId: number, landId: string | number, toolInvId: number) {
+    return await transaction(async (client) => {
+        // 1. Get Land
+        const landRes = await client.query('SELECT * FROM lands WHERE id = $1 FOR UPDATE', [landId]);
+        if (landRes.rows.length === 0) throw new Error('Land not found');
+        const land = landRes.rows[0];
+
+        // 2. Validate ownership
+        if (Number(land.owner_id) !== Number(userId)) {
+            throw new Error('Não é dono desta terra');
+        }
+
+        // 3. Check condition is 'mature'
+        if (land.condition !== 'mature') {
+            throw new Error('A colheita ainda não está madura');
+        }
+
+        if (!land.current_crop_id) {
+            throw new Error('Nenhuma cultura plantada neste terreno');
+        }
+
+        // 4. Validate equipment (harvester)
+        const machineRes = await client.query(`
+            SELECT g.stats, g.type
+            FROM inventory i
+            JOIN game_items g ON i.item_id = g.id
+            WHERE i.id = $1 AND i.user_id = $2
+        `, [toolInvId, userId]);
+
+        if (machineRes.rows.length === 0) {
+            throw new Error('Máquina não encontrada');
+        }
+
+        const machine = machineRes.rows[0];
+        if (machine.type !== 'heavy' || machine.stats.operation !== 'harvesting') {
+            throw new Error('Precisa de uma colheitadeira para colher');
+        }
+
+        // 5. Get crop information
+        const cropRes = await client.query(
+            'SELECT * FROM game_items WHERE id = $1',
+            [land.current_crop_id]
+        );
+
+        if (cropRes.rows.length === 0) {
+            throw new Error('Cultura não encontrada');
+        }
+
+        const crop = cropRes.rows[0];
+        const areaHa = land.area_sqm / 10000;
+
+        // 6. Calculate yield with random factor (80% - 120%)
+        const baseYield = areaHa * (crop.stats.yield_kg_ha || 3000);
+        const randomFactor = 0.8 + (Math.random() * 0.4); // 0.8 to 1.2
+        const finalYield = Math.floor(baseYield * randomFactor);
+
+        // 7. Add to silo
+        await addToSilo(userId, 'produce', land.current_crop_id, finalYield);
+
+        // 8. Reset land condition
+        await client.query(`
+            UPDATE lands 
+            SET condition = 'bruto', current_crop_id = NULL, operation_start = NULL, operation_end = NULL, operation_type = NULL
+            WHERE id = $1
+        `, [landId]);
+
+        return {
+            success: true,
+            yield: finalYield,
+            cropName: crop.name,
+            newCondition: 'bruto'
+        };
+    });
+}
+
+// Check maturation - updates all lands that have matured
+export async function checkMaturation() {
+    const result = await query(`
+        UPDATE lands 
+        SET condition = 'mature', operation_type = NULL
+        WHERE operation_end < NOW() AND condition = 'growing'
+        RETURNING id
+    `);
+
+    return {
+        maturedLands: result.rows.map(row => row.id),
+        count: result.rows.length
+    };
 }

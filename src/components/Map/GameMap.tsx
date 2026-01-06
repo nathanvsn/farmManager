@@ -235,7 +235,31 @@ export default function GameMap() {
         }, 5000);
 
         return () => clearInterval(interval);
-    }, [autoSearchActive, bounds]);
+    }, [autoSearchActive, handleSurvey]);
+
+    // Auto-check maturation every 30 seconds
+    useEffect(() => {
+        const checkInterval = setInterval(async () => {
+            try {
+                const res = await fetch('/api/game/farm/check-maturation', {
+                    method: 'POST'
+                });
+                const data = await res.json();
+
+                if (data.maturedLands && data.maturedLands.length > 0) {
+                    console.log(`${data.count} land(s) matured:`, data.maturedLands);
+                    // Refresh lands if on owned lands mode
+                    if (!discoveryMode && bounds) {
+                        fetchLands(bounds, currentZoom);
+                    }
+                }
+            } catch (e) {
+                console.error('Maturation check error:', e);
+            }
+        }, 30000); // Every 30 seconds
+
+        return () => clearInterval(checkInterval);
+    }, [discoveryMode, bounds, currentZoom, fetchLands]);
 
     // Handle map clicks - define this before passing to GeoJSON
     const onFeatureClick = (feature: any, layer: L.Layer) => {

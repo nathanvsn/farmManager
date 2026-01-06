@@ -5,12 +5,16 @@ import { Wallet, Diamond, User, Store, Warehouse, Tractor } from 'lucide-react';
 import Link from 'next/link';
 import ShopModal from './ShopModal';
 import BarnModal from './BarnModal';
+import SiloModal from './SiloModal';
+import MarketModal from './MarketModal';
 
 export default function TopBar() {
     const [user, setUser] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [showShop, setShowShop] = useState(false);
     const [showBarn, setShowBarn] = useState(false);
+    const [showSilo, setShowSilo] = useState(false);
+    const [showMarket, setShowMarket] = useState(false);
     const [discoveryMode, setDiscoveryMode] = useState(true);
     const [autoSearchActive, setAutoSearchActive] = useState(false);
 
@@ -128,13 +132,24 @@ export default function TopBar() {
                         <span className="text-[9px] font-bold uppercase">Loja</span>
                     </button>
 
-                    {/* Placeholder for Silo */}
+                    {/* Silo Button */}
                     <button
-                        className="flex flex-col items-center justify-center w-16 h-14 bg-slate-800/50 rounded border border-slate-700 text-slate-500 cursor-not-allowed opacity-50"
-                        title="Silo (Em breve)"
+                        onClick={() => setShowSilo(true)}
+                        className="flex flex-col items-center justify-center w-16 h-14 bg-orange-900/20 hover:bg-orange-900/50 rounded border border-orange-800/50 text-orange-200 transition-all group"
+                        title="Silo"
                     >
-                        <span className="text-xl opacity-50">🏭</span>
-                        <span className="text-[9px] font-bold uppercase mt-1">Silo</span>
+                        <span className="text-xl group-hover:scale-110 transition-transform mb-1">🏭</span>
+                        <span className="text-[9px] font-bold uppercase">Silo</span>
+                    </button>
+
+                    {/* Market Button */}
+                    <button
+                        onClick={() => setShowMarket(true)}
+                        className="flex flex-col items-center justify-center w-16 h-14 bg-green-900/20 hover:bg-green-900/50 rounded border border-green-800/50 text-green-200 transition-all group"
+                        title="Mercado"
+                    >
+                        <span className="text-xl group-hover:scale-110 transition-transform mb-1">🏪</span>
+                        <span className="text-[9px] font-bold uppercase">Mercado</span>
                     </button>
                 </div>
 
@@ -173,6 +188,8 @@ export default function TopBar() {
 
             <ShopModal isOpen={showShop} onClose={() => setShowShop(false)} />
             <BarnModal isOpen={showBarn} onClose={() => setShowBarn(false)} />
+            <SiloModal isOpen={showSilo} onClose={() => setShowSilo(false)} />
+            <MarketModal isOpen={showMarket} onClose={() => setShowMarket(false)} />
         </div>
     );
 }

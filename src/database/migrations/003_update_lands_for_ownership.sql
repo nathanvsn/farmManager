@@ -15,7 +15,7 @@ BEGIN
 
     -- condition (land quality)
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='lands' AND column_name='condition') THEN
-        ALTER TABLE lands ADD COLUMN condition VARCHAR(20) CHECK (condition IN ('bruto', 'limpo', 'arado'));
+        ALTER TABLE lands ADD COLUMN condition VARCHAR(20) CHECK (condition IN ('bruto', 'limpo', 'arado', 'growing', 'mature'));
     END IF;
 
     -- status (availability)

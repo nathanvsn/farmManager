@@ -28,7 +28,10 @@ export async function startAction(userId: number, landId: string | number, actio
         if (landRes.rows.length === 0) throw new Error('Land not found');
         const land = landRes.rows[0];
 
-        if (land.owner_id !== userId) throw new Error('Não é dono desta terra');
+        if (Number(land.owner_id) !== Number(userId)) {
+            console.log(`Ownership Mismatch: LandOwner=${land.owner_id} (${typeof land.owner_id}) vs User=${userId} (${typeof userId})`);
+            throw new Error('Não é dono desta terra');
+        }
         if (land.operation_end && new Date(land.operation_end) > new Date()) throw new Error('Terra em uso/operação');
 
         // 2. Validate Action vs State

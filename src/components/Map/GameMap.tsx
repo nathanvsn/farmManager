@@ -2,8 +2,10 @@
 
 import { MapContainer, TileLayer, GeoJSON, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import L from 'leaflet';
+import LandSidebar from '../HUD/LandSidebar';
+import LandsOverviewSidebar from '../HUD/LandsOverviewSidebar';
 
 // Fix for default marker icon in Next.js + Leaflet
 const iconUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png';
@@ -21,22 +23,22 @@ const DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-function MapController({ onBoundsChange }: { onBoundsChange: (bounds: L.LatLngBounds) => void }) {
+function MapController({ onBoundsChange }: { onBoundsChange: (bounds: L.LatLngBounds, zoom: number) => void }) {
     const map = useMapEvents({
         moveend: () => {
-            onBoundsChange(map.getBounds());
+            onBoundsChange(map.getBounds(), map.getZoom());
         },
         zoomend: () => {
-            onBoundsChange(map.getBounds());
+            onBoundsChange(map.getBounds(), map.getZoom());
         },
         load: () => {
-            onBoundsChange(map.getBounds());
+            onBoundsChange(map.getBounds(), map.getZoom());
         }
     });
 
     useEffect(() => {
         // Initial bounds
-        onBoundsChange(map.getBounds());
+        onBoundsChange(map.getBounds(), map.getZoom());
     }, [map, onBoundsChange]);
 
     return null;
@@ -47,15 +49,58 @@ export default function GameMap() {
     const [lands, setLands] = useState<any>(null);
     const [bounds, setBounds] = useState<L.LatLngBounds | null>(null);
     const [loading, setLoading] = useState(false);
+    const [selectedLand, setSelectedLand] = useState<any>(null);
+    const [isOverviewOpen, setIsOverviewOpen] = useState(false);
+    const [discoveryMode, setDiscoveryMode] = useState(true); // Toggle for field discovery
+    const [currentZoom, setCurrentZoom] = useState(13);
 
     useEffect(() => {
         setIsMounted(true);
     }, []);
 
-    const fetchLands = useCallback(async (currentBounds: L.LatLngBounds) => {
+    // Stable fetch function
+    const fetchLands = useCallback(async (currentBounds: L.LatLngBounds, zoom: number) => {
+        if (!discoveryMode) {
+            // Discovery off: fetch only owned lands (from /api/game/my-lands)
+            try {
+                const res = await fetch('/api/game/my-lands');
+                if (res.ok) {
+                    const data = await res.json();
+                    // Convert to GeoJSON format
+                    const geoJson = {
+                        type: 'FeatureCollection',
+                        features: data.lands.map((land: any) => ({
+                            type: 'Feature',
+                            properties: {
+                                id: land.id,
+                                land_type: land.land_type,
+                                area_sqm: land.area_sqm,
+                                condition: land.condition,
+                                status: 'comprado',
+                                operation_start: land.operation_start,
+                                operation_end: land.operation_end,
+                                operation_type: land.operation_type
+                            },
+                            geometry: JSON.parse(land.geojson)
+                        }))
+                    };
+                    setLands(geoJson);
+                }
+            } catch (err) {
+                console.error(err);
+            }
+            return;
+        }
+
+        // Discovery mode: fetch available lands with zoom limit
+        if (zoom < 10) {
+            console.warn('Zoom muito distante para buscar campos. Aproxime o mapa.');
+            return;
+        }
+
         const bbox = `${currentBounds.getWest()},${currentBounds.getSouth()},${currentBounds.getEast()},${currentBounds.getNorth()}`;
         try {
-            const res = await fetch(`/api/lands?bbox=${bbox}`);
+            const res = await fetch(`/api/lands?bbox=${bbox}&t=${Date.now()}`);
             if (res.ok) {
                 const data = await res.json();
                 setLands(data);
@@ -63,7 +108,7 @@ export default function GameMap() {
         } catch (err) {
             console.error(err);
         }
-    }, []);
+    }, [discoveryMode]);
 
     const handleSurvey = async () => {
         if (!bounds) return;
@@ -83,7 +128,7 @@ export default function GameMap() {
             });
             if (res.ok) {
                 // Refresh lands
-                await fetchLands(bounds);
+                await fetchLands(bounds, currentZoom);
             }
         } catch (err) {
             console.error(err);
@@ -92,22 +137,23 @@ export default function GameMap() {
         }
     };
 
-    const handleBoundsChange = useCallback((newBounds: L.LatLngBounds) => {
+    const handleBoundsChange = useCallback((newBounds: L.LatLngBounds, zoom: number) => {
         setBounds(newBounds);
-        // Debounce fetching could be good, but for now direct call
-        fetchLands(newBounds);
-    }, [fetchLands]);
+        setCurrentZoom(zoom);
+        if (!discoveryMode) {
+            // Only fetch once when turned off, not on every move
+            if (lands === null) fetchLands(newBounds, zoom);
+        } else {
+            fetchLands(newBounds, zoom);
+        }
+    }, [fetchLands, discoveryMode, lands]);
 
     // Expose buy function to window for popup interaction
     useEffect(() => {
         (window as any).buyLand = async (landId: any) => {
-            console.log('Tentativa de compra para ID:', landId, 'Tipo:', typeof landId);
+            console.log('Tentativa de compra para ID:', landId);
 
-            if (!landId) {
-                alert(`ID inválido: ${landId}`);
-                return;
-            }
-
+            if (!landId) return;
             if (!confirm('Deseja comprar este terreno?')) return;
 
             try {
@@ -120,85 +166,83 @@ export default function GameMap() {
                 const data = await res.json();
                 if (data.success) {
                     alert('Terreno comprado com sucesso!');
-                    // Refresh lands with timestamp to force update
-                    if (bounds) fetchLands(bounds);
-                    // Notify other components (TopBar)
+                    if (bounds) fetchLands(bounds, currentZoom);
                     window.dispatchEvent(new Event('game_update'));
                 } else {
                     alert('Erro: ' + (data.error || 'Falha na compra'));
                 }
             } catch (e) {
-                console.error(e);
                 alert('Erro de conexão');
             }
         };
     }, [bounds, fetchLands]);
 
+    // Handle map clicks - define this before passing to GeoJSON
+    const onFeatureClick = (feature: any, layer: L.Layer) => {
+        const { status, id } = feature.properties;
+        const isOwned = status === 'comprado';
+
+        if (isOwned) {
+            // Select land for Sidebar
+            console.log('Land selected:', feature.properties);
+            setSelectedLand(feature.properties);
+
+            // Unbind popup if it exists (or just close it)
+            layer.closePopup();
+        }
+        // If not owned, let the popup handle it (already bound below)
+    };
+
     const onEachFeature = (feature: any, layer: L.Layer) => {
         if (feature.properties) {
-            const { id, land_type, area_sqm, condition, price, status, owner_id } = feature.properties;
-
-            if (!id) {
-                console.warn('Feature sem ID:', feature);
-                return; // Ou renderizar popup de erro
-            }
-
+            const { id, land_type, area_sqm, condition, price, status } = feature.properties;
             const hectares = (area_sqm / 10000).toFixed(2);
             const isOwned = status === 'comprado';
-
             const priceFormatted = parseFloat(price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-            const popupContent = `
-                <div class="p-2 min-w-[200px]">
-                    <h3 class="font-bold text-lg capitalize mb-1">${land_type}</h3>
-                     <div class="space-y-1 text-sm mb-3">
-                        <p><strong>Condição:</strong> ${condition || 'Desconhecido'}</p>
-                        <p><strong>Área:</strong> ${hectares} ha</p>
-                        <p><strong>Preço:</strong> ${priceFormatted}</p>
-                        <p><strong>Status:</strong> <span class="${isOwned ? 'text-red-600' : 'text-green-600'} font-bold">${status}</span></p>
-                     </div>
-                    
-                    ${!isOwned ? `
-                    <button 
-                        onclick="window.buyLand('${id}')"
-                        class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded w-full transition"
-                    >
-                        Comprar
-                    </button>
-                    ` : `
-                    <button disabled class="bg-gray-400 text-white font-bold py-2 px-4 rounded w-full cursor-not-allowed">
-                        Indisponível
-                    </button>
-                    `}
-                </div>
-            `;
-            layer.bindPopup(popupContent);
+            layer.on({
+                click: () => onFeatureClick(feature, layer)
+            });
 
-            // Style based on ownership/type
+            // Only bind popup if NOT owned
+            if (!isOwned) {
+                const popupContent = `
+                    <div class="p-2 min-w-[200px]">
+                        <h3 class="font-bold text-lg capitalize mb-1">${land_type}</h3>
+                         <div class="space-y-1 text-sm mb-3">
+                            <p><strong>Condição:</strong> ${condition || 'Desconhecido'}</p>
+                            <p><strong>Área:</strong> ${hectares} ha</p>
+                            <p><strong>Preço:</strong> ${priceFormatted}</p>
+                            <p><strong>Status:</strong> <span class="text-green-600 font-bold">${status}</span></p>
+                         </div>
+                        <button 
+                            onclick="window.buyLand('${id}')"
+                            class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded w-full transition"
+                        >
+                            Comprar
+                        </button>
+                    </div>
+                `;
+                layer.bindPopup(popupContent);
+            }
+
+            // Styles
             const pathLayer = layer as L.Path;
             if (isOwned) {
-                pathLayer.setStyle({ color: '#ef4444', weight: 2, fillOpacity: 0.6, fillColor: '#f87171' }); // Red for owned
+                pathLayer.setStyle({ color: '#ef4444', weight: 2, fillOpacity: 0.6, fillColor: '#f87171' });
+            } else if (condition === 'arado') {
+                pathLayer.setStyle({ color: '#d97706', weight: 2, fillOpacity: 0.4, fillColor: '#fbbf24' });
+            } else if (condition === 'limpo') {
+                pathLayer.setStyle({ color: '#65a30d', weight: 2, fillOpacity: 0.4, fillColor: '#84cc16' });
             } else {
-                if (condition === 'arado') {
-                    pathLayer.setStyle({ color: '#d97706', weight: 2, fillOpacity: 0.4, fillColor: '#fbbf24' }); // Amber/Brownish for Plowed
-                } else if (condition === 'limpo') {
-                    pathLayer.setStyle({ color: '#65a30d', weight: 2, fillOpacity: 0.4, fillColor: '#84cc16' }); // Lime Green for Clean
-                } else {
-                    pathLayer.setStyle({ color: '#166534', weight: 1, fillOpacity: 0.3, fillColor: '#22c55e' }); // Dark Green for Raw
-                }
+                pathLayer.setStyle({ color: '#166534', weight: 1, fillOpacity: 0.3, fillColor: '#22c55e' });
             }
         }
     };
 
     const mapStyle = (feature: any) => {
-        // Default style (will be overridden by onEachFeature usually, but good for init)
-        if (feature.properties.status === 'comprado') {
-            return { color: '#ef4444', weight: 2, fillOpacity: 0.6, fillColor: '#f87171' };
-        }
         return { color: '#166534', weight: 1, fillOpacity: 0.3, fillColor: '#22c55e' };
     };
-
-    console.log('Rendering Map. Lands data:', lands ? `${lands.features.length} features` : 'null');
 
     return (
         <div className="relative w-full h-full">
@@ -219,23 +263,64 @@ export default function GameMap() {
                 {lands && <GeoJSON key={JSON.stringify(lands)} data={lands} style={mapStyle} onEachFeature={onEachFeature} />}
             </MapContainer>
 
-            <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-1000">
+            {/* Blur overlay when discovery mode is off */}
+            {!discoveryMode && (
+                <div className="absolute inset-0 pointer-events-none z-[500]" style={{
+                    backdropFilter: 'blur(2px) brightness(0.7)',
+                    WebkitBackdropFilter: 'blur(2px) brightness(0.7)'
+                }} />
+            )}
+
+            {/* Control Buttons */}
+            <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-[1000] flex gap-3">
+                {/* Campos Toggle */}
+                <button
+                    onClick={() => {
+                        setDiscoveryMode(!discoveryMode);
+                        if (!discoveryMode && bounds) {
+                            // Turning ON - fetch lands
+                            fetchLands(bounds, currentZoom);
+                        } else if (discoveryMode && bounds) {
+                            // Turning OFF - fetch only owned
+                            fetchLands(bounds, currentZoom);
+                        }
+                    }}
+                    className={`font-bold py-3 px-6 rounded-full shadow-lg border-2 border-white transition-all transform hover:scale-105 flex items-center gap-2 ${discoveryMode
+                            ? 'bg-green-600 hover:bg-green-700 text-white'
+                            : 'bg-gray-600 hover:bg-gray-700 text-white'
+                        }`}
+                >
+                    <span className="text-xl">{discoveryMode ? '🗺️' : '🏠'}</span>
+                    {discoveryMode ? 'Campos' : 'Minhas Terras'}
+                </button>
+
+                {/* Survey Button */}
                 <button
                     onClick={handleSurvey}
                     disabled={loading}
                     className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 px-6 rounded-full shadow-lg border-2 border-white transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                    {loading ? (
-                        <>
-                            <span className="animate-spin text-xl">⚙️</span> Surveying...
-                        </>
-                    ) : (
-                        <>
-                            <span className="text-xl">🔍</span> Search Area
-                        </>
-                    )}
+                    {loading ? <span className="animate-spin text-xl">⚙️</span> : <span className="text-xl">🔍</span>}
+                    {loading ? 'Surveying...' : 'Search Area'}
                 </button>
             </div>
+
+            {/* Lands Overview Sidebar */}
+            <LandsOverviewSidebar
+                isOpen={isOverviewOpen}
+                onToggle={() => setIsOverviewOpen(!isOverviewOpen)}
+                onSelectLand={(land) => setSelectedLand(land)}
+                selectedLandId={selectedLand?.id}
+            />
+
+            {/* Land Detail Sidebar */}
+            {selectedLand && (
+                <LandSidebar
+                    land={selectedLand}
+                    onClose={() => setSelectedLand(null)}
+                    onUpdate={() => bounds && fetchLands(bounds, currentZoom)}
+                />
+            )}
         </div>
     );
 }

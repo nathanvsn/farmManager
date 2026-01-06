@@ -1,5 +1,6 @@
 
 import { useState, useEffect } from 'react';
+import Image from 'next/image';
 
 type ShopModalProps = {
     isOpen: boolean;

@@ -142,23 +142,34 @@ export async function generateLandForBounds(bounds: Bounds) {
             const basePricePerSqm = 0.5; // Ajuste conforme economia do jogo
             const initialPrice = area * basePricePerSqm * priceMultiplier;
 
-            // Salva no banco
+            // Check if this land already exists before inserting
             try {
-                await query(`
-                         INSERT INTO lands (geom, area_sqm, land_type, is_generated, condition, price, status)
-                         VALUES (
-                             ST_MakeValid(ST_GeomFromText($1, 4326)), 
-                             $2, 
-                             'fertile_land', 
-                             true,
-                             $3,
-                             $4,
-                             'disponivel'
-                         )
-                         ON CONFLICT DO NOTHING
-                     `, [wkt, area, condition, initialPrice]);
+                // First, check if a land with similar geometry already exists
+                const existingLand = await query(`
+                    SELECT id FROM lands 
+                    WHERE ST_Equals(geom, ST_MakeValid(ST_GeomFromText($1, 4326)))
+                    LIMIT 1
+                `, [wkt]);
 
-                savedCount++;
+                // Only insert if it doesn't exist
+                if (existingLand.rows.length === 0) {
+                    await query(`
+                        INSERT INTO lands (geom, area_sqm, land_type, is_generated, condition, price, status)
+                        VALUES (
+                            ST_MakeValid(ST_GeomFromText($1, 4326)), 
+                            $2, 
+                            'fertile_land', 
+                            true,
+                            $3,
+                            $4,
+                            'disponivel'
+                        )
+                    `, [wkt, area, condition, initialPrice]);
+                    savedCount++;
+                } else {
+                    // Land already exists, skip it to preserve ownership/operations
+                    // console.log(`Skipping existing land at ${wkt.substring(0, 50)}...`);
+                }
             } catch (dbErr) {
                 console.error('Database insert error:', dbErr);
             }

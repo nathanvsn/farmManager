@@ -1,7 +1,6 @@
-
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { startAction, finishOperation, harvest } from '@/lib/farmingService';
+import { startAction, finishOperation, startHarvest, finishHarvest } from '@/lib/farmingService';
 
 export async function POST(request: Request) {
     const session = await getSession();
@@ -22,7 +21,10 @@ export async function POST(request: Request) {
             return NextResponse.json(result);
         } else if (type === 'harvest') {
             if (!toolInvId) return NextResponse.json({ error: 'Tool required' }, { status: 400 });
-            const result = await harvest(userId, landId, toolInvId);
+            const result = await startHarvest(userId, landId, toolInvId);
+            return NextResponse.json(result);
+        } else if (type === 'finishHarvest') {
+            const result = await finishHarvest(userId, landId);
             return NextResponse.json(result);
         } else if (type === 'start') {
             if (!toolInvId) return NextResponse.json({ error: 'Tool required' }, { status: 400 });

@@ -374,12 +374,7 @@ export default function LandSidebar({ land, onClose, onUpdate }: LandActionSideb
                                                     const data = await res.json();
 
                                                     if (data.success) {
-                                                        alert(
-                                                            `Colheita realizada com sucesso!\n\n` +
-                                                            `Produto: ${data.cropName}\n` +
-                                                            `Quantidade colhida: ${data.yield}kg\n` +
-                                                            `Adicionado ao silo!`
-                                                        );
+                                                        alert(`Colheita iniciada! Aguarde ${Math.floor(data.duration / 60)} minuto(s).`);
                                                         onUpdate();
                                                     } else {
                                                         alert('Erro: ' + data.error);

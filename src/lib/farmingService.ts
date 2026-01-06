@@ -155,12 +155,19 @@ export async function finishOperation(userId: number, landId: string | number) {
         const land = landRes.rows[0];
 
         if (!land.operation_end || new Date() < new Date(land.operation_end)) {
-            // throw new Error('Operação ainda não terminou');
-            // Or just return false
             return { completed: false };
         }
 
         const action = land.operation_type;
+
+        // If harvest, redirect to finishHarvest
+        if (action === 'harvest') {
+            // Re-use finishHarvest logic (need to exit transaction and call it)
+            // Actually, we can't easily call another transaction from within this one
+            // So we'll handle harvest completion here inline
+            return await finishHarvestInline(client, userId, landId, land);
+        }
+
         let newCondition = land.condition;
         let cropId = land.current_crop_id;
 
@@ -200,8 +207,82 @@ export async function finishOperation(userId: number, landId: string | number) {
     });
 }
 
-// Harvest function
-export async function harvest(userId: number, landId: string | number, toolInvId: number) {
+// Helper function to finish harvest within existing transaction
+async function finishHarvestInline(client: any, userId: number, landId: string | number, land: any) {
+    if (!land.current_crop_id) {
+        throw new Error('Nenhuma cultura plantada');
+    }
+
+    // Get crop information
+    const cropRes = await client.query(
+        'SELECT * FROM game_items WHERE id = $1',
+        [land.current_crop_id]
+    );
+
+    if (cropRes.rows.length === 0) {
+        throw new Error('Cultura não encontrada');
+    }
+
+    const crop = cropRes.rows[0];
+    const areaHa = land.area_sqm / 10000;
+
+    // Calculate yield with random factor (80% - 120%)
+    const baseYield = areaHa * (crop.stats.yield_kg_ha || 3000);
+    const randomFactor = 0.8 + (Math.random() * 0.4);
+    const finalYield = Math.floor(baseYield * randomFactor);
+
+    // Get produce item
+    const produceRes = await client.query(
+        `SELECT id FROM game_items 
+         WHERE type = 'produce' 
+         AND category = $1`,
+        [crop.category]
+    );
+
+    let produceItemId = land.current_crop_id;
+    if (produceRes.rows.length > 0) {
+        produceItemId = produceRes.rows[0].id;
+    }
+
+    // Add to silo (inline to avoid nested transaction)
+    const siloRes = await client.query(
+        'SELECT silo_inventory FROM users WHERE id = $1',
+        [userId]
+    );
+
+    const silo = siloRes.rows[0]?.silo_inventory || { seeds: {}, produce: {} };
+    if (!silo.produce) silo.produce = {};
+
+    const currentQty = silo.produce[produceItemId] || 0;
+    silo.produce[produceItemId] = currentQty + finalYield;
+
+    await client.query(
+        'UPDATE users SET silo_inventory = $1 WHERE id = $2',
+        [JSON.stringify(silo), userId]
+    );
+
+    // Reset land
+    await client.query(`
+        UPDATE lands 
+        SET condition = 'limpo', 
+            current_crop_id = NULL, 
+            operation_start = NULL, 
+            operation_end = NULL, 
+            operation_type = NULL
+        WHERE id = $1
+    `, [landId]);
+
+    return {
+        completed: true,
+        success: true,
+        yield: finalYield,
+        cropName: crop.name,
+        newCondition: 'limpo'
+    };
+}
+
+// Start Harvest operation (with timer)
+export async function startHarvest(userId: number, landId: string | number, toolInvId: number) {
     return await transaction(async (client) => {
         // 1. Get Land
         const landRes = await client.query('SELECT * FROM lands WHERE id = $1 FOR UPDATE', [landId]);
@@ -213,7 +294,12 @@ export async function harvest(userId: number, landId: string | number, toolInvId
             throw new Error('Não é dono desta terra');
         }
 
-        // 3. Check condition is 'mature'
+        // 3. Check if there's an operation in progress
+        if (land.operation_end && new Date(land.operation_end) > new Date()) {
+            throw new Error('Já existe uma operação em andamento');
+        }
+
+        // 4. Check condition is 'mature'
         if (land.condition !== 'mature') {
             throw new Error('A colheita ainda não está madura');
         }
@@ -222,7 +308,7 @@ export async function harvest(userId: number, landId: string | number, toolInvId
             throw new Error('Nenhuma cultura plantada neste terreno');
         }
 
-        // 4. Validate equipment (harvester)
+        // 5. Validate equipment (harvester)
         const machineRes = await client.query(`
             SELECT g.stats, g.type
             FROM inventory i
@@ -239,7 +325,51 @@ export async function harvest(userId: number, landId: string | number, toolInvId
             throw new Error('Precisa de uma colheitadeira para colher');
         }
 
-        // 5. Get crop information
+        // 6. Calculate harvest duration based on efficiency
+        const efficiency = machine.stats.efficiency || 2.0; // Ha/h
+        const durationSeconds = getGameDuration(land.area_sqm, efficiency);
+
+        const startTime = new Date();
+        const endTime = new Date(startTime.getTime() + durationSeconds * 1000);
+
+        // 7. Start harvest operation
+        await client.query(`
+            UPDATE lands 
+            SET operation_start = $1, operation_end = $2, operation_type = 'harvest'
+            WHERE id = $3
+        `, [startTime, endTime, landId]);
+
+        return { success: true, duration: durationSeconds, endTime };
+    });
+}
+
+// Finish Harvest operation (after timer completes)
+export async function finishHarvest(userId: number, landId: string | number) {
+    return await transaction(async (client) => {
+        // 1. Get Land
+        const landRes = await client.query('SELECT * FROM lands WHERE id = $1 FOR UPDATE', [landId]);
+        if (landRes.rows.length === 0) throw new Error('Land not found');
+        const land = landRes.rows[0];
+
+        // 2. Validate ownership
+        if (Number(land.owner_id) !== Number(userId)) {
+            throw new Error('Não é dono desta terra');
+        }
+
+        // 3. Validate operation finished
+        if (!land.operation_end || new Date(land.operation_end) > new Date()) {
+            return { completed: false };
+        }
+
+        if (land.operation_type !== 'harvest') {
+            throw new Error('Operação ativa não é colheita');
+        }
+
+        if (!land.current_crop_id) {
+            throw new Error('Nenhuma cultura plantada');
+        }
+
+        // 4. Get crop information
         const cropRes = await client.query(
             'SELECT * FROM game_items WHERE id = $1',
             [land.current_crop_id]
@@ -252,14 +382,12 @@ export async function harvest(userId: number, landId: string | number, toolInvId
         const crop = cropRes.rows[0];
         const areaHa = land.area_sqm / 10000;
 
-        // 6. Calculate yield with random factor (80% - 120%)
+        // 5. Calculate yield with random factor (80% - 120%)
         const baseYield = areaHa * (crop.stats.yield_kg_ha || 3000);
         const randomFactor = 0.8 + (Math.random() * 0.4); // 0.8 to 1.2
         const finalYield = Math.floor(baseYield * randomFactor);
 
-        // 7. Add to silo as PRODUCE (not seed)
-        // Get the produce item ID from seed stats or create mapping
-        // For now, we'll need to query the produce item that corresponds to this seed
+        // 6. Get produce item (query by category matching seed category)
         const produceRes = await client.query(
             `SELECT id FROM game_items 
              WHERE type = 'produce' 
@@ -272,16 +400,22 @@ export async function harvest(userId: number, landId: string | number, toolInvId
             produceItemId = produceRes.rows[0].id;
         }
 
+        // 7. Add to silo
         await addToSilo(userId, 'produce', produceItemId, finalYield);
 
-        // 8. Reset land condition to 'limpo' (ready to plow again)
+        // 8. Reset land to 'limpo' (ready for next cycle)
         await client.query(`
             UPDATE lands 
-            SET condition = 'limpo', current_crop_id = NULL, operation_start = NULL, operation_end = NULL, operation_type = NULL
+            SET condition = 'limpo', 
+                current_crop_id = NULL, 
+                operation_start = NULL, 
+                operation_end = NULL, 
+                operation_type = NULL
             WHERE id = $1
         `, [landId]);
 
         return {
+            completed: true,
             success: true,
             yield: finalYield,
             cropName: crop.name,

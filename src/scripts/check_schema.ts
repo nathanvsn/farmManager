@@ -1,3 +1,4 @@
+
 import { Pool } from 'pg';
 
 const pool = new Pool({
@@ -8,21 +9,21 @@ const pool = new Pool({
     database: process.env.POSTGRES_DB || 'farming_manager',
 });
 
-export const query = (text: string, params?: any[]) => pool.query(text, params);
-
-export const transaction = async (callback: (client: any) => Promise<any>) => {
+async function checkSchema() {
     const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-        const result = await callback(client);
-        await client.query('COMMIT');
-        return result;
+        const res = await client.query(`
+            SELECT column_name, data_type 
+            FROM information_schema.columns 
+            WHERE table_name = 'lands' AND column_name = 'id';
+        `);
+        console.log('Lands ID type:', res.rows[0]);
     } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
+        console.error(e);
     } finally {
         client.release();
+        await pool.end();
     }
-};
+}
 
-export default pool;
+checkSchema();

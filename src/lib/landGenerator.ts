@@ -122,18 +122,41 @@ export async function generateLandForBounds(bounds: Bounds) {
 
             const wkt = wellknown.stringify(simplifiedField);
 
+            // Random Condition Logic
+            let condition = 'bruto';
+            let priceMultiplier = 1.0;
+            const rand = Math.random();
+
+            if (rand < 0.70) {
+                condition = 'bruto'; // 70%
+                priceMultiplier = 1.0;
+            } else if (rand < 0.90) {
+                condition = 'limpo'; // 20%
+                priceMultiplier = 1.15; // +15%
+            } else {
+                condition = 'arado'; // 10%
+                priceMultiplier = 1.35; // +35%
+            }
+
+            // Base Price calculation (e.g., 10 per sqm)
+            const basePricePerSqm = 0.5; // Ajuste conforme economia do jogo
+            const initialPrice = area * basePricePerSqm * priceMultiplier;
+
             // Salva no banco
             try {
                 await query(`
-                         INSERT INTO lands (geom, area_sqm, land_type, is_generated)
+                         INSERT INTO lands (geom, area_sqm, land_type, is_generated, condition, price, status)
                          VALUES (
                              ST_MakeValid(ST_GeomFromText($1, 4326)), 
                              $2, 
                              'fertile_land', 
-                             true
+                             true,
+                             $3,
+                             $4,
+                             'disponivel'
                          )
                          ON CONFLICT DO NOTHING
-                     `, [wkt, area]);
+                     `, [wkt, area, condition, initialPrice]);
 
                 savedCount++;
             } catch (dbErr) {

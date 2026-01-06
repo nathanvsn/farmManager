@@ -98,36 +98,104 @@ export default function GameMap() {
         fetchLands(newBounds);
     }, [fetchLands]);
 
+    // Expose buy function to window for popup interaction
+    useEffect(() => {
+        (window as any).buyLand = async (landId: any) => {
+            console.log('Tentativa de compra para ID:', landId, 'Tipo:', typeof landId);
+
+            if (!landId) {
+                alert(`ID inválido: ${landId}`);
+                return;
+            }
+
+            if (!confirm('Deseja comprar este terreno?')) return;
+
+            try {
+                const res = await fetch('/api/game/buy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ landId })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    alert('Terreno comprado com sucesso!');
+                    // Refresh lands with timestamp to force update
+                    if (bounds) fetchLands(bounds);
+                    // Notify other components (TopBar)
+                    window.dispatchEvent(new Event('game_update'));
+                } else {
+                    alert('Erro: ' + (data.error || 'Falha na compra'));
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Erro de conexão');
+            }
+        };
+    }, [bounds, fetchLands]);
+
     const onEachFeature = (feature: any, layer: L.Layer) => {
         if (feature.properties) {
-            const { land_type, area_sqm } = feature.properties;
+            const { id, land_type, area_sqm, condition, price, status, owner_id } = feature.properties;
+
+            if (!id) {
+                console.warn('Feature sem ID:', feature);
+                return; // Ou renderizar popup de erro
+            }
+
             const hectares = (area_sqm / 10000).toFixed(2);
-            layer.bindPopup(`
-                <div class="p-2">
-                    <h3 class="font-bold capitalize">${land_type}</h3>
-                    <p>Area: ${hectares} ha</p>
-                    <button class="bg-green-600 text-white px-2 py-1 mt-2 rounded text-xs w-full">Buy Land</button>
+            const isOwned = status === 'comprado';
+
+            const priceFormatted = parseFloat(price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+            const popupContent = `
+                <div class="p-2 min-w-[200px]">
+                    <h3 class="font-bold text-lg capitalize mb-1">${land_type}</h3>
+                     <div class="space-y-1 text-sm mb-3">
+                        <p><strong>Condição:</strong> ${condition || 'Desconhecido'}</p>
+                        <p><strong>Área:</strong> ${hectares} ha</p>
+                        <p><strong>Preço:</strong> ${priceFormatted}</p>
+                        <p><strong>Status:</strong> <span class="${isOwned ? 'text-red-600' : 'text-green-600'} font-bold">${status}</span></p>
+                     </div>
+                    
+                    ${!isOwned ? `
+                    <button 
+                        onclick="window.buyLand('${id}')"
+                        class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded w-full transition"
+                    >
+                        Comprar
+                    </button>
+                    ` : `
+                    <button disabled class="bg-gray-400 text-white font-bold py-2 px-4 rounded w-full cursor-not-allowed">
+                        Indisponível
+                    </button>
+                    `}
                 </div>
-            `);
+            `;
+            layer.bindPopup(popupContent);
 
             // Style based on ownership/type
-            if (feature.properties.owner_id) {
-                (layer as L.Path).setStyle({ color: 'blue', weight: 2, fillOpacity: 0.4 });
+            const pathLayer = layer as L.Path;
+            if (isOwned) {
+                pathLayer.setStyle({ color: '#ef4444', weight: 2, fillOpacity: 0.6, fillColor: '#f87171' }); // Red for owned
             } else {
-                (layer as L.Path).setStyle({ color: 'white', weight: 1, fillOpacity: 0.2, fillColor: 'green' });
+                if (condition === 'arado') {
+                    pathLayer.setStyle({ color: '#d97706', weight: 2, fillOpacity: 0.4, fillColor: '#fbbf24' }); // Amber/Brownish for Plowed
+                } else if (condition === 'limpo') {
+                    pathLayer.setStyle({ color: '#65a30d', weight: 2, fillOpacity: 0.4, fillColor: '#84cc16' }); // Lime Green for Clean
+                } else {
+                    pathLayer.setStyle({ color: '#166534', weight: 1, fillOpacity: 0.3, fillColor: '#22c55e' }); // Dark Green for Raw
+                }
             }
         }
     };
 
-    if (!isMounted) {
-        return <div className="w-full h-full flex items-center justify-center bg-gray-100">Loading Map...</div>;
-    }
-
     const mapStyle = (feature: any) => {
-        if (feature.properties.owner_id) {
-            return { color: 'blue', weight: 2, fillOpacity: 0.4 };
+        // Default style (will be overridden by onEachFeature usually, but good for init)
+        if (feature.properties.status === 'comprado') {
+            return { color: '#ef4444', weight: 2, fillOpacity: 0.6, fillColor: '#f87171' };
         }
-        return { color: 'yellow', weight: 2, fillOpacity: 0.2, fillColor: 'green' };
+        return { color: '#166534', weight: 1, fillOpacity: 0.3, fillColor: '#22c55e' };
     };
 
     console.log('Rendering Map. Lands data:', lands ? `${lands.features.length} features` : 'null');

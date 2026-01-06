@@ -20,6 +20,9 @@ export async function GET(request: Request) {
         owner_id, 
         area_sqm, 
         land_type,
+        price,
+        condition,
+        status,
         ST_AsGeoJSON(geom)::json as geometry 
       FROM lands 
       WHERE ST_Intersects(
@@ -35,7 +38,10 @@ export async function GET(request: Request) {
                 id: row.id,
                 owner_id: row.owner_id,
                 area_sqm: row.area_sqm,
-                land_type: row.land_type
+                land_type: row.land_type,
+                price: row.price,
+                condition: row.condition,
+                status: row.status
             },
             geometry: row.geometry
         }));

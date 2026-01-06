@@ -126,6 +126,26 @@ const ITEMS = [
         description: 'Alta produtividade por hectare.',
         image_url: 'https://placehold.co/200x150?text=Milho',
         stats: { growth_time: 180, yield_kg_ha: 9000, seed_usage_kg_ha: 20, sell_price: 1.2 }
+    },
+
+    // --- PRODUCE (Harvested crops) ---
+    {
+        name: 'Soja',
+        type: 'produce',
+        category: 'soybean',
+        price: 0, // Not sold in shop, only harvested
+        description: 'Soja colhida, pronta para venda.',
+        image_url: 'https://placehold.co/200x150?text=Soja+Colhida',
+        stats: { sell_price: 3.5 } // Same as seed sell_price for market
+    },
+    {
+        name: 'Milho',
+        type: 'produce',
+        category: 'corn',
+        price: 0, // Not sold in shop, only harvested
+        description: 'Milho colhido, pronto para venda.',
+        image_url: 'https://placehold.co/200x150?text=Milho+Colhido',
+        stats: { sell_price: 1.2 } // Same as seed sell_price for market
     }
 ];
 

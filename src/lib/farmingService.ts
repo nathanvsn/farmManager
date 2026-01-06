@@ -257,13 +257,27 @@ export async function harvest(userId: number, landId: string | number, toolInvId
         const randomFactor = 0.8 + (Math.random() * 0.4); // 0.8 to 1.2
         const finalYield = Math.floor(baseYield * randomFactor);
 
-        // 7. Add to silo
-        await addToSilo(userId, 'produce', land.current_crop_id, finalYield);
+        // 7. Add to silo as PRODUCE (not seed)
+        // Get the produce item ID from seed stats or create mapping
+        // For now, we'll need to query the produce item that corresponds to this seed
+        const produceRes = await client.query(
+            `SELECT id FROM game_items 
+             WHERE type = 'produce' 
+             AND category = $1`,
+            [crop.category] // e.g., 'soybean', 'corn'
+        );
 
-        // 8. Reset land condition
+        let produceItemId = land.current_crop_id; // fallback to seed ID
+        if (produceRes.rows.length > 0) {
+            produceItemId = produceRes.rows[0].id;
+        }
+
+        await addToSilo(userId, 'produce', produceItemId, finalYield);
+
+        // 8. Reset land condition to 'limpo' (ready to plow again)
         await client.query(`
             UPDATE lands 
-            SET condition = 'bruto', current_crop_id = NULL, operation_start = NULL, operation_end = NULL, operation_type = NULL
+            SET condition = 'limpo', current_crop_id = NULL, operation_start = NULL, operation_end = NULL, operation_type = NULL
             WHERE id = $1
         `, [landId]);
 
@@ -271,7 +285,7 @@ export async function harvest(userId: number, landId: string | number, toolInvId
             success: true,
             yield: finalYield,
             cropName: crop.name,
-            newCondition: 'bruto'
+            newCondition: 'limpo'
         };
     });
 }

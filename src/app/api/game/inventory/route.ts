@@ -8,7 +8,12 @@ export async function GET(request: Request) {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     try {
-        const inventory = await getInventory(session.id);
+        const userId = session.id as number;
+        if (typeof userId !== 'number') {
+            return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+        }
+
+        const inventory = await getInventory(userId);
         return NextResponse.json({ inventory });
     } catch (error) {
         console.error(error);
@@ -24,11 +29,16 @@ export async function POST(request: Request) {
         const body = await request.json();
         const { action, tractorId, implementId, implementInvId } = body;
 
+        const userId = session.id as number;
+        if (typeof userId !== 'number') {
+            return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+        }
+
         if (action === 'equip') {
-            await equipImplement(session.id, tractorId, implementId);
+            await equipImplement(userId, tractorId, implementId);
             return NextResponse.json({ success: true });
         } else if (action === 'unequip') {
-            await unequipImplement(session.id, implementInvId);
+            await unequipImplement(userId, implementInvId);
             return NextResponse.json({ success: true });
         }
 

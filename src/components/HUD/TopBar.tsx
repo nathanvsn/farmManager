@@ -11,6 +11,8 @@ export default function TopBar() {
     const [loading, setLoading] = useState(true);
     const [showShop, setShowShop] = useState(false);
     const [showBarn, setShowBarn] = useState(false);
+    const [discoveryMode, setDiscoveryMode] = useState(true);
+    const [autoSearchActive, setAutoSearchActive] = useState(false);
 
     const fetchUser = () => {
         // console.log('Fetching user session...');
@@ -33,8 +35,23 @@ export default function TopBar() {
             fetchUser();
         };
 
+        // Listen for map state changes
+        const handleMapStateChange = (event: any) => {
+            if (event.detail?.discoveryMode !== undefined) {
+                setDiscoveryMode(event.detail.discoveryMode);
+            }
+            if (event.detail?.autoSearchActive !== undefined) {
+                setAutoSearchActive(event.detail.autoSearchActive);
+            }
+        };
+
         window.addEventListener('game_update', handleGameUpdate);
-        return () => window.removeEventListener('game_update', handleGameUpdate);
+        window.addEventListener('map_state_changed', handleMapStateChange);
+
+        return () => {
+            window.removeEventListener('game_update', handleGameUpdate);
+            window.removeEventListener('map_state_changed', handleMapStateChange);
+        };
     }, []);
 
     if (loading) return null;
@@ -56,6 +73,40 @@ export default function TopBar() {
         <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2 pointer-events-none w-full px-8 items-end">
             {/* Wrapper to allow pointer events for buttons */}
             <div className="pointer-events-auto flex items-center gap-4 bg-slate-900/90 p-2 rounded-xl border border-slate-700 backdrop-blur shadow-2xl">
+
+                {/* Map Controls */}
+                <div className="flex items-center gap-2 mr-4 border-r border-slate-700 pr-4">
+                    <button
+                        onClick={() => {
+                            const event = new CustomEvent('map_toggle_discovery');
+                            window.dispatchEvent(event);
+                        }}
+                        className={`flex flex-col items-center justify-center w-16 h-14 rounded border transition-all group ${!discoveryMode
+                            ? 'bg-green-900/20 hover:bg-green-900/50 border-green-800/50 text-green-200'
+                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-700/50'
+                            }`}
+                        title="Alternar entre Campos e Minhas Terras"
+                    >
+                        <span className="text-xl group-hover:scale-110 transition-transform mb-1">🏠</span>
+                        <span className="text-[9px] font-bold uppercase">Terras</span>
+                    </button>
+
+                    {/* Auto Search Area Toggle */}
+                    <button
+                        onClick={() => {
+                            const event = new CustomEvent('map_toggle_autosearch');
+                            window.dispatchEvent(event);
+                        }}
+                        className={`flex flex-col items-center justify-center w-16 h-14 rounded border transition-all group ${autoSearchActive
+                            ? 'bg-yellow-900/20 hover:bg-yellow-900/50 border-yellow-800/50 text-yellow-200'
+                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-700/50'
+                            }`}
+                        title="Busca automática a cada 5 segundos"
+                    >
+                        <span className={`text-xl group-hover:scale-110 transition-transform mb-1 ${autoSearchActive ? 'animate-pulse' : ''}`}>🔍</span>
+                        <span className="text-[9px] font-bold uppercase">Auto</span>
+                    </button>
+                </div>
 
                 {/* HUD Buttons */}
                 <div className="flex items-center gap-2 mr-4 border-r border-slate-700 pr-4">

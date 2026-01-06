@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:migrate": "npx tsx src/database/migrate.ts"
   },
   "dependencies": {
     "@turf/turf": "^7.3.1",
@@ -38,5 +39,8 @@
     "eslint-config-next": "16.1.1",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.9.8"
   }
 }

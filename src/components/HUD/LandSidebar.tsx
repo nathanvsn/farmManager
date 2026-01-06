@@ -135,6 +135,8 @@ export default function LandSidebar({ land, onClose, onUpdate }: LandActionSideb
     const isOperationActive = land.operation_end && new Date(land.operation_end) > new Date();
     const isOperationFinished = land.operation_end && new Date(land.operation_end) <= new Date();
 
+    console.log(`Land on sidebar: ${land}`);
+
     // Available actions based on state
     // Bruto -> Clean
     // Limpo -> Plow

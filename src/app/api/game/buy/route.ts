@@ -12,11 +12,17 @@ export async function POST(request: Request) {
         const body = await request.json();
         const { landId } = body;
 
-        if (!landId) {
-            return NextResponse.json({ error: 'Missing landId' }, { status: 400 });
+        // Validate landId (should be a string UUID)
+        if (!landId || typeof landId !== 'string') {
+            return NextResponse.json({ error: 'Missing or invalid landId' }, { status: 400 });
         }
 
-        const result = await buyLand(session.id, landId);
+        const userId = session.id as number;
+        if (typeof userId !== 'number') {
+            return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+        }
+
+        const result = await buyLand(userId, landId);
         return NextResponse.json({ success: true, ...result });
 
     } catch (error: any) {

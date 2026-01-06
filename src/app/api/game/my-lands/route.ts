@@ -7,6 +7,11 @@ export async function GET(request: Request) {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     try {
+        const userId = session.id as number;
+        if (typeof userId !== 'number') {
+            return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+        }
+
         const res = await query(`
             SELECT 
                 id,
@@ -27,7 +32,7 @@ export async function GET(request: Request) {
                     ELSE 3
                 END,
                 operation_end ASC NULLS LAST
-        `, [session.id]);
+        `, [userId]);
 
         const lands = res.rows.map(land => ({
             ...land,

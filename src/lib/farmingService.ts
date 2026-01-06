@@ -32,7 +32,15 @@ export async function startAction(userId: number, landId: string | number, actio
             console.log(`Ownership Mismatch: LandOwner=${land.owner_id} (${typeof land.owner_id}) vs User=${userId} (${typeof userId})`);
             throw new Error('Não é dono desta terra');
         }
-        if (land.operation_end && new Date(land.operation_end) > new Date()) throw new Error('Terra em uso/operação');
+
+        // Check if there's an operation in progress
+        if (land.operation_end && new Date(land.operation_end) > new Date()) {
+            const operationName = land.operation_type === 'clean' ? 'Limpeza' :
+                land.operation_type === 'plow' ? 'Aragem' :
+                    land.operation_type === 'sow' ? 'Plantio' : 'Operação';
+            const minutesRemaining = Math.ceil((new Date(land.operation_end).getTime() - Date.now()) / 60000);
+            throw new Error(`${operationName} em andamento! Faltam ~${minutesRemaining} minuto(s).`);
+        }
 
         // 2. Validate Action vs State
         // Rules:

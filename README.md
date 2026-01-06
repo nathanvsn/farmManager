@@ -14,6 +14,26 @@ pnpm dev
 bun dev
 ```
 
+## Database Setup
+
+### 1. Start PostgreSQL with Docker
+
+```bash
+docker-compose up -d
+```
+
+### 2. Run Database Migrations
+
+```bash
+npm run db:migrate
+```
+
+This single command will automatically:
+- Create all necessary tables (users, lands, game_items, inventory)
+- Set up PostGIS extension for geographic data
+- Track which migrations have been executed
+- Can be run multiple times safely (idempotent)
+
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.

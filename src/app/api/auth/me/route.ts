@@ -8,8 +8,13 @@ export async function GET() {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const userId = session.id as number;
+    if (typeof userId !== 'number') {
+        return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+    }
+
     // Fetch fresh data
-    const result = await query('SELECT id, nickname, email, money, diamonds FROM users WHERE id = $1', [session.id]);
+    const result = await query('SELECT id, nickname, email, money, diamonds FROM users WHERE id = $1', [userId]);
     const user = result.rows[0];
 
     if (!user) {

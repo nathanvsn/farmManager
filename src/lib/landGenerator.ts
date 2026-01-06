@@ -120,7 +120,7 @@ export async function generateLandForBounds(bounds: Bounds) {
             // Simplifica a geometria para não pesar no banco de dados
             const simplifiedField = turf.simplify(poly, { tolerance: 0.00005, highQuality: true });
 
-            const wkt = wellknown.stringify(simplifiedField);
+            const wkt = wellknown.stringify(simplifiedField.geometry as any);
 
             // Random Condition Logic
             let condition = 'bruto';

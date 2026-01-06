@@ -11,14 +11,19 @@ export async function POST(request: Request) {
         const body = await request.json();
         const { action, landId, toolInvId, type } = body;
 
+        const userId = session.id as number;
+        if (typeof userId !== 'number') {
+            return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+        }
+
         // action: 'start' | 'finish'
 
         if (type === 'finish') {
-            const result = await finishOperation(session.id, landId);
+            const result = await finishOperation(userId, landId);
             return NextResponse.json(result);
         } else if (type === 'start') {
             if (!toolInvId) return NextResponse.json({ error: 'Tool required' }, { status: 400 });
-            const result = await startAction(session.id, landId, action, toolInvId);
+            const result = await startAction(userId, landId, action, toolInvId);
             return NextResponse.json(result);
         }
 

@@ -36,7 +36,12 @@ export async function POST(request: Request) {
         const body = await request.json();
         const { itemId, quantity } = body;
 
-        const result = await buyItem(session.id, itemId, quantity || 1);
+        const userId = session.id as number;
+        if (typeof userId !== 'number') {
+            return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+        }
+
+        const result = await buyItem(userId, itemId, quantity || 1);
         return NextResponse.json(result);
 
     } catch (error: any) {

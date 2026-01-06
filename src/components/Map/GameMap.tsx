@@ -53,6 +53,7 @@ export default function GameMap() {
     const [isOverviewOpen, setIsOverviewOpen] = useState(false);
     const [discoveryMode, setDiscoveryMode] = useState(true); // Toggle for field discovery
     const [currentZoom, setCurrentZoom] = useState(13);
+    const [autoSearchActive, setAutoSearchActive] = useState(false); // Auto-search toggle
 
     useEffect(() => {
         setIsMounted(true);
@@ -137,14 +138,26 @@ export default function GameMap() {
         }
     };
 
+    // Throttle ref to limit API calls
+    const lastFetchTime = useRef<number>(0);
+    const fetchThrottleMs = 2000; // 2 seconds
+
     const handleBoundsChange = useCallback((newBounds: L.LatLngBounds, zoom: number) => {
         setBounds(newBounds);
         setCurrentZoom(zoom);
+
+        const now = Date.now();
+        const timeSinceLastFetch = now - lastFetchTime.current;
+
         if (!discoveryMode) {
             // Only fetch once when turned off, not on every move
             if (lands === null) fetchLands(newBounds, zoom);
         } else {
-            fetchLands(newBounds, zoom);
+            // Throttle: only fetch if 2 seconds have passed since last fetch
+            if (timeSinceLastFetch >= fetchThrottleMs) {
+                lastFetchTime.current = now;
+                fetchLands(newBounds, zoom);
+            }
         }
     }, [fetchLands, discoveryMode, lands]);
 
@@ -175,7 +188,54 @@ export default function GameMap() {
                 alert('Erro de conexão');
             }
         };
-    }, [bounds, fetchLands]);
+    }, [bounds, fetchLands, currentZoom]);
+
+    // Listen for TopBar control events
+    useEffect(() => {
+        const handleDiscoveryToggle = () => {
+            setDiscoveryMode(prev => {
+                const newMode = !prev;
+                if (bounds) {
+                    fetchLands(bounds, currentZoom);
+                }
+                // Notify TopBar of state change
+                window.dispatchEvent(new CustomEvent('map_state_changed', {
+                    detail: { discoveryMode: newMode }
+                }));
+                return newMode;
+            });
+        };
+
+        const handleAutoSearchToggle = () => {
+            setAutoSearchActive(prev => {
+                const newState = !prev;
+                // Notify TopBar of state change
+                window.dispatchEvent(new CustomEvent('map_state_changed', {
+                    detail: { autoSearchActive: newState }
+                }));
+                return newState;
+            });
+        };
+
+        window.addEventListener('map_toggle_discovery', handleDiscoveryToggle);
+        window.addEventListener('map_toggle_autosearch', handleAutoSearchToggle);
+
+        return () => {
+            window.removeEventListener('map_toggle_discovery', handleDiscoveryToggle);
+            window.removeEventListener('map_toggle_autosearch', handleAutoSearchToggle);
+        };
+    }, [bounds, currentZoom, fetchLands]);
+
+    // Auto-search interval (every 5 seconds when active)
+    useEffect(() => {
+        if (!autoSearchActive || !bounds) return;
+
+        const interval = setInterval(() => {
+            handleSurvey();
+        }, 5000);
+
+        return () => clearInterval(interval);
+    }, [autoSearchActive, bounds]);
 
     // Handle map clicks - define this before passing to GeoJSON
     const onFeatureClick = (feature: any, layer: L.Layer) => {
@@ -252,58 +312,16 @@ export default function GameMap() {
                 scrollWheelZoom={true}
                 className="w-full h-full z-0"
             >
+                {/* OpenStreetMap - Colorful and clean */}
                 <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                />
-                <TileLayer
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <MapController onBoundsChange={handleBoundsChange} />
                 {lands && <GeoJSON key={JSON.stringify(lands)} data={lands} style={mapStyle} onEachFeature={onEachFeature} />}
             </MapContainer>
 
-            {/* Blur overlay when discovery mode is off */}
-            {!discoveryMode && (
-                <div className="absolute inset-0 pointer-events-none z-[500]" style={{
-                    backdropFilter: 'blur(2px) brightness(0.7)',
-                    WebkitBackdropFilter: 'blur(2px) brightness(0.7)'
-                }} />
-            )}
-
-            {/* Control Buttons */}
-            <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-[1000] flex gap-3">
-                {/* Campos Toggle */}
-                <button
-                    onClick={() => {
-                        setDiscoveryMode(!discoveryMode);
-                        if (!discoveryMode && bounds) {
-                            // Turning ON - fetch lands
-                            fetchLands(bounds, currentZoom);
-                        } else if (discoveryMode && bounds) {
-                            // Turning OFF - fetch only owned
-                            fetchLands(bounds, currentZoom);
-                        }
-                    }}
-                    className={`font-bold py-3 px-6 rounded-full shadow-lg border-2 border-white transition-all transform hover:scale-105 flex items-center gap-2 ${discoveryMode
-                            ? 'bg-green-600 hover:bg-green-700 text-white'
-                            : 'bg-gray-600 hover:bg-gray-700 text-white'
-                        }`}
-                >
-                    <span className="text-xl">{discoveryMode ? '🗺️' : '🏠'}</span>
-                    {discoveryMode ? 'Campos' : 'Minhas Terras'}
-                </button>
-
-                {/* Survey Button */}
-                <button
-                    onClick={handleSurvey}
-                    disabled={loading}
-                    className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 px-6 rounded-full shadow-lg border-2 border-white transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                    {loading ? <span className="animate-spin text-xl">⚙️</span> : <span className="text-xl">🔍</span>}
-                    {loading ? 'Surveying...' : 'Search Area'}
-                </button>
-            </div>
+            {/* Blur overlay removed - cleaner view */}
 
             {/* Lands Overview Sidebar */}
             <LandsOverviewSidebar

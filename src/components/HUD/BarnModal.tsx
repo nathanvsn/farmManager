@@ -17,6 +17,7 @@ type InventoryItem = {
     quantity: number;
     instance_id?: string;
     attached_to?: string;
+    wear?: number; // Equipment wear (0.00 - 1.00)
 };
 
 export default function BarnModal({ isOpen, onClose }: BarnModalProps) {
@@ -94,6 +95,29 @@ export default function BarnModal({ isOpen, onClose }: BarnModalProps) {
         }
     };
 
+    const handleRepair = async (item: InventoryItem) => {
+        const wearPct = Math.round((item.wear || 0) * 100);
+        if (!confirm(`Reparar ${item.name}? (Desgaste: ${wearPct}%)`)) return;
+
+        try {
+            const res = await fetch('/api/game/repair', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inventoryId: item.id })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(`${item.name} reparado! Custo: $${data.repairCost.toLocaleString()}`);
+                fetchInventory();
+                window.dispatchEvent(new Event('game_update'));
+            } else {
+                alert('Erro: ' + data.error);
+            }
+        } catch (e) {
+            alert('Erro de conexão');
+        }
+    };
+
     // Filter Logic
     const tractors = items.filter(i => i.type === 'tractor');
     const implementsList = items.filter(i => i.type === 'implement');
@@ -142,6 +166,39 @@ export default function BarnModal({ isOpen, onClose }: BarnModalProps) {
                                                     <div className="flex-1">
                                                         <h4 className="font-bold text-white text-sm">{tractor.name}</h4>
                                                         <p className="text-xs text-amber-300 mb-1">{tractor.stats.hp} cv</p>
+
+                                                        {/* Wear indicator */}
+                                                        <div className="mb-2">
+                                                            <div className="flex justify-between text-[10px] mb-0.5">
+                                                                <span className="text-slate-400">Desgaste</span>
+                                                                <span className={`font-mono ${(tractor.wear || 0) >= 1 ? 'text-slate-500' :
+                                                                        (tractor.wear || 0) >= 0.7 ? 'text-red-400' :
+                                                                            (tractor.wear || 0) >= 0.3 ? 'text-amber-400' : 'text-emerald-400'
+                                                                    }`}>
+                                                                    {Math.round((tractor.wear || 0) * 100)}%
+                                                                </span>
+                                                            </div>
+                                                            <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                                                                <div
+                                                                    className={`h-full transition-all ${(tractor.wear || 0) >= 1 ? 'bg-slate-500' :
+                                                                            (tractor.wear || 0) >= 0.7 ? 'bg-red-500' :
+                                                                                (tractor.wear || 0) >= 0.3 ? 'bg-amber-500' : 'bg-emerald-500'
+                                                                        }`}
+                                                                    style={{ width: `${Math.min(100, (tractor.wear || 0) * 100)}%` }}
+                                                                />
+                                                            </div>
+                                                            {(tractor.wear || 0) > 0 && (
+                                                                <button
+                                                                    onClick={() => handleRepair(tractor)}
+                                                                    className={`mt-1 text-[10px] px-2 py-0.5 rounded w-full ${(tractor.wear || 0) >= 1
+                                                                            ? 'bg-red-600 text-white animate-pulse'
+                                                                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                                                        }`}
+                                                                >
+                                                                    {(tractor.wear || 0) >= 1 ? '⚠️ QUEBRADO - REPARAR' : '🔧 Reparar'}
+                                                                </button>
+                                                            )}
+                                                        </div>
 
                                                         <div className="mt-2 bg-slate-900 p-2 rounded border border-slate-700 min-h-[50px] flex items-center justify-center">
                                                             {attachment ? (

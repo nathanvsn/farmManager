@@ -3,7 +3,7 @@ import { query, transaction } from '@/lib/db';
 
 export async function getSiloInventory(userId: number) {
     const result = await query(`
-        SELECT silo_inventory FROM users WHERE id = $1
+        SELECT silo_inventory, silo_capacity FROM users WHERE id = $1
     `, [userId]);
 
     if (result.rows.length === 0) {
@@ -11,6 +11,7 @@ export async function getSiloInventory(userId: number) {
     }
 
     const siloData = result.rows[0].silo_inventory || { seeds: {}, produce: {} };
+    const capacity = result.rows[0].silo_capacity || 50000;
 
     // Enrich with game_items data
     const seedIds = Object.keys(siloData.seeds || {});
@@ -45,9 +46,19 @@ export async function getSiloInventory(userId: number) {
         }));
     }
 
+    // Calculate total usage
+    const totalSeeds = Object.values(siloData.seeds || {}).reduce((sum: number, qty: any) => sum + Number(qty), 0);
+    const totalProduce = Object.values(siloData.produce || {}).reduce((sum: number, qty: any) => sum + Number(qty), 0);
+    const used = totalSeeds + totalProduce;
+    const pctFull = Math.round((used / capacity) * 100);
+
     return {
         seeds: enrichedSeeds,
-        produce: enrichedProduce
+        produce: enrichedProduce,
+        capacity,
+        used,
+        pctFull,
+        available: capacity - used
     };
 }
 
@@ -59,11 +70,23 @@ export async function addToSilo(
 ) {
     return await transaction(async (client) => {
         const result = await client.query(
-            'SELECT silo_inventory FROM users WHERE id = $1 FOR UPDATE',
+            'SELECT silo_inventory, silo_capacity FROM users WHERE id = $1 FOR UPDATE',
             [userId]
         );
 
         const silo = result.rows[0]?.silo_inventory || { seeds: {}, produce: {} };
+        const capacity = result.rows[0]?.silo_capacity || 50000;
+
+        // Calculate current usage
+        const totalSeeds = Object.values(silo.seeds || {}).reduce((sum: number, qty: any) => sum + Number(qty), 0);
+        const totalProduce = Object.values(silo.produce || {}).reduce((sum: number, qty: any) => sum + Number(qty), 0);
+        const currentUsed = totalSeeds + totalProduce;
+        const available = capacity - currentUsed;
+
+        // Check capacity
+        if (quantity > available) {
+            throw new Error(`Silo cheio! Espaço disponível: ${available.toLocaleString()}kg, Necessário: ${quantity.toLocaleString()}kg`);
+        }
 
         if (!silo[type]) {
             silo[type] = {};

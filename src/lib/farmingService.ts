@@ -1,6 +1,7 @@
 
 import { query, transaction } from '@/lib/db';
 import { removeFromSilo, addToSilo } from '@/lib/siloService';
+import { checkEquipmentWear, incrementWear } from '@/lib/inventoryService';
 
 // Helper to calculate duration in seconds
 function calculateDuration(areaSqm: number, efficiencyHaH: number, speedMultiplier: number) {
@@ -15,11 +16,13 @@ function calculateDuration(areaSqm: number, efficiencyHaH: number, speedMultipli
 
 // Just returning seconds for now, can perform speed logic in frontend or here later.
 // Let's stick effectively to: 1 Ha with 1 Ha/h takes 10 seconds for demo smoothness
-function getGameDuration(areaSqm: number, efficiency: number) {
+// Now also considering complexityIndex (1.0 - 3.0) which multiplies duration
+function getGameDuration(areaSqm: number, efficiency: number, complexityIndex: number = 1.0) {
     const areaHa = areaSqm / 10000;
-    // Base: 10 seconds per Hectare per Efficiency Unit
+    // Base: 30 seconds per Hectare per Efficiency Unit
     const baseSecondsPerHa = 30;
-    return Math.floor((areaHa * baseSecondsPerHa) / (efficiency || 1));
+    // Apply complexity multiplier
+    return Math.floor((areaHa * baseSecondsPerHa * complexityIndex) / (efficiency || 1));
 }
 
 export async function startAction(userId: number, landId: string | number, action: 'clean' | 'plow' | 'sow' | 'harvest', toolInvId: number, seedId?: number) {
@@ -73,6 +76,12 @@ export async function startAction(userId: number, landId: string | number, actio
         if (machineRes.rows.length === 0) throw new Error('Máquina não encontrada');
         const machine = machineRes.rows[0];
 
+        // 3.1 Check equipment wear (must be < 1.0 to use)
+        const wearCheck = await checkEquipmentWear(userId, toolInvId);
+        if (!wearCheck.usable) {
+            throw new Error(`Equipamento "${wearCheck.name}" precisa de reparo! (Desgaste: ${Math.round(wearCheck.wear * 100)}%)`);
+        }
+
         let efficiency = 0;
         let operationType = '';
 
@@ -125,7 +134,9 @@ export async function startAction(userId: number, landId: string | number, actio
             }
         }
 
-        const durationSeconds = getGameDuration(land.area_sqm, efficiency);
+        // Apply complexity index (defaults to 1.0 if not set)
+        const complexityIndex = parseFloat(land.complexity_index) || 1.0;
+        const durationSeconds = getGameDuration(land.area_sqm, efficiency, complexityIndex);
         const startTime = new Date();
         const endTime = new Date(startTime.getTime() + durationSeconds * 1000);
 
@@ -155,6 +166,8 @@ export async function finishOperation(userId: number, landId: string | number) {
         const land = landRes.rows[0];
 
         if (!land.operation_end || new Date() < new Date(land.operation_end)) {
+            // throw new Error('Operação ainda não terminou');
+            // Or just return false
             return { completed: false };
         }
 
@@ -294,12 +307,7 @@ export async function startHarvest(userId: number, landId: string | number, tool
             throw new Error('Não é dono desta terra');
         }
 
-        // 3. Check if there's an operation in progress
-        if (land.operation_end && new Date(land.operation_end) > new Date()) {
-            throw new Error('Já existe uma operação em andamento');
-        }
-
-        // 4. Check condition is 'mature'
+        // 3. Check condition is 'mature'
         if (land.condition !== 'mature') {
             throw new Error('A colheita ainda não está madura');
         }
@@ -308,7 +316,7 @@ export async function startHarvest(userId: number, landId: string | number, tool
             throw new Error('Nenhuma cultura plantada neste terreno');
         }
 
-        // 5. Validate equipment (harvester)
+        // 4. Validate equipment (harvester)
         const machineRes = await client.query(`
             SELECT g.stats, g.type
             FROM inventory i
@@ -382,12 +390,14 @@ export async function finishHarvest(userId: number, landId: string | number) {
         const crop = cropRes.rows[0];
         const areaHa = land.area_sqm / 10000;
 
-        // 5. Calculate yield with random factor (80% - 120%)
+        // 6. Calculate yield with random factor (80% - 120%)
         const baseYield = areaHa * (crop.stats.yield_kg_ha || 3000);
         const randomFactor = 0.8 + (Math.random() * 0.4); // 0.8 to 1.2
         const finalYield = Math.floor(baseYield * randomFactor);
 
-        // 6. Get produce item (query by category matching seed category)
+        // 7. Add to silo as PRODUCE (not seed)
+        // Get the produce item ID from seed stats or create mapping
+        // For now, we'll need to query the produce item that corresponds to this seed
         const produceRes = await client.query(
             `SELECT id FROM game_items 
              WHERE type = 'produce' 
@@ -400,22 +410,16 @@ export async function finishHarvest(userId: number, landId: string | number) {
             produceItemId = produceRes.rows[0].id;
         }
 
-        // 7. Add to silo
         await addToSilo(userId, 'produce', produceItemId, finalYield);
 
-        // 8. Reset land to 'limpo' (ready for next cycle)
+        // 8. Reset land condition to 'limpo' (ready to plow again)
         await client.query(`
             UPDATE lands 
-            SET condition = 'limpo', 
-                current_crop_id = NULL, 
-                operation_start = NULL, 
-                operation_end = NULL, 
-                operation_type = NULL
+            SET condition = 'limpo', current_crop_id = NULL, operation_start = NULL, operation_end = NULL, operation_type = NULL
             WHERE id = $1
         `, [landId]);
 
         return {
-            completed: true,
             success: true,
             yield: finalYield,
             cropName: crop.name,

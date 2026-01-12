@@ -24,6 +24,10 @@ type SiloData = {
         category: string;
         stats: any;
     }>;
+    capacity: number;
+    used: number;
+    pctFull: number;
+    available: number;
     statistics: {
         total_seeds_kg: number;
         total_produce_kg: number;
@@ -68,9 +72,34 @@ export default function SiloModal({ isOpen, onClose }: SiloModalProps) {
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="p-4 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
-                    <h2 className="text-2xl font-bold text-white">🏭 Silo - Armazenamento</h2>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">✕</button>
+                <div className="p-4 bg-slate-800 border-b border-slate-700">
+                    <div className="flex justify-between items-center mb-2">
+                        <h2 className="text-2xl font-bold text-white">🏭 Silo - Armazenamento</h2>
+                        <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">✕</button>
+                    </div>
+                    {siloData && (
+                        <div className="mt-2">
+                            <div className="flex justify-between text-sm mb-1">
+                                <span className="text-slate-400">Capacidade</span>
+                                <span className={`font-mono font-bold ${siloData.pctFull >= 90 ? 'text-red-400' :
+                                        siloData.pctFull >= 70 ? 'text-amber-400' : 'text-emerald-400'
+                                    }`}>
+                                    {siloData.used.toLocaleString()} / {siloData.capacity.toLocaleString()} kg ({siloData.pctFull}%)
+                                </span>
+                            </div>
+                            <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                                <div
+                                    className={`h-full transition-all duration-300 ${siloData.pctFull >= 90 ? 'bg-red-500' :
+                                            siloData.pctFull >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
+                                        }`}
+                                    style={{ width: `${Math.min(100, siloData.pctFull)}%` }}
+                                />
+                            </div>
+                            {siloData.pctFull >= 90 && (
+                                <p className="text-xs text-red-400 mt-1">⚠️ Silo quase cheio! Venda produtos no mercado.</p>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Tabs */}
@@ -114,8 +143,8 @@ export default function SiloModal({ isOpen, onClose }: SiloModalProps) {
                                                 <div
                                                     key={seed.id}
                                                     className={`bg-slate-800 rounded-lg p-4 border ${seed.quantity < 100
-                                                            ? 'border-red-500/50'
-                                                            : 'border-slate-700'
+                                                        ? 'border-red-500/50'
+                                                        : 'border-slate-700'
                                                         }`}
                                                 >
                                                     <div className="flex items-center gap-3 mb-3">

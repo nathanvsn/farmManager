@@ -8,6 +8,7 @@ export async function getInventory(userId: number) {
             i.quantity, 
             i.instance_id, 
             i.attached_to,
+            i.wear,
             g.id as item_id,
             g.name, 
             g.type, 
@@ -147,4 +148,115 @@ export async function unequipImplement(userId: number, implementInvId: number) {
         UPDATE inventory SET attached_to = NULL 
         WHERE id = $1 AND user_id = $2
      `, [implementInvId, userId]);
+}
+
+// Increment equipment wear after operation
+export async function incrementWear(userId: number, inventoryId: number, amount: number = 0.03) {
+    return await transaction(async (client) => {
+        // Get current wear and validate ownership
+        const result = await client.query(`
+            SELECT i.wear, g.type, g.name
+            FROM inventory i
+            JOIN game_items g ON i.item_id = g.id
+            WHERE i.id = $1 AND i.user_id = $2
+        `, [inventoryId, userId]);
+
+        if (result.rows.length === 0) {
+            throw new Error('Equipamento não encontrado');
+        }
+
+        const item = result.rows[0];
+
+        // Only apply wear to machinery (tractors, implements, heavy)
+        if (!['tractor', 'implement', 'heavy'].includes(item.type)) {
+            return { success: true, wear: 0 };
+        }
+
+        const currentWear = parseFloat(item.wear) || 0;
+        const newWear = Math.min(1.0, currentWear + amount);
+
+        await client.query(`
+            UPDATE inventory SET wear = $1 WHERE id = $2
+        `, [newWear, inventoryId]);
+
+        return { success: true, wear: newWear, name: item.name };
+    });
+}
+
+// Check if equipment is usable (wear < 1.0)
+export async function checkEquipmentWear(userId: number, inventoryId: number): Promise<{ usable: boolean; wear: number; name: string }> {
+    const result = await query(`
+        SELECT i.wear, g.name
+        FROM inventory i
+        JOIN game_items g ON i.item_id = g.id
+        WHERE i.id = $1 AND i.user_id = $2
+    `, [inventoryId, userId]);
+
+    if (result.rows.length === 0) {
+        throw new Error('Equipamento não encontrado');
+    }
+
+    const wear = parseFloat(result.rows[0].wear) || 0;
+    return {
+        usable: wear < 1.0,
+        wear,
+        name: result.rows[0].name
+    };
+}
+
+// Repair equipment - costs 10% of original price
+export async function repairEquipment(userId: number, inventoryId: number) {
+    return await transaction(async (client) => {
+        // Get equipment info and price
+        const result = await client.query(`
+            SELECT i.id, i.wear, g.price, g.name, g.type
+            FROM inventory i
+            JOIN game_items g ON i.item_id = g.id
+            WHERE i.id = $1 AND i.user_id = $2
+        `, [inventoryId, userId]);
+
+        if (result.rows.length === 0) {
+            throw new Error('Equipamento não encontrado');
+        }
+
+        const item = result.rows[0];
+        const currentWear = parseFloat(item.wear) || 0;
+
+        if (currentWear === 0) {
+            throw new Error('Equipamento já está em perfeitas condições');
+        }
+
+        // Repair cost = 10% of base price × wear percentage
+        const basePrice = parseFloat(item.price);
+        const repairCost = Math.ceil(basePrice * 0.10 * currentWear);
+
+        // Check user funds
+        const userRes = await client.query(
+            'SELECT money FROM users WHERE id = $1 FOR UPDATE',
+            [userId]
+        );
+
+        const userMoney = parseFloat(userRes.rows[0].money);
+        if (userMoney < repairCost) {
+            throw new Error(`Saldo insuficiente. Custo do reparo: $${repairCost.toLocaleString()}`);
+        }
+
+        // Deduct money and reset wear
+        await client.query(
+            'UPDATE users SET money = money - $1 WHERE id = $2',
+            [repairCost, userId]
+        );
+
+        await client.query(
+            'UPDATE inventory SET wear = 0.00 WHERE id = $1',
+            [inventoryId]
+        );
+
+        return {
+            success: true,
+            repairCost,
+            newBalance: userMoney - repairCost,
+            equipmentName: item.name
+        };
+    });
 }
